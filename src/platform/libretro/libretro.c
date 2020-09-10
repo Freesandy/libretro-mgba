@@ -43,6 +43,7 @@ FS_Archive sdmcArchive;
 
 #define SAMPLES 512
 #define RUMBLE_PWM 35
+#define EVENT_RATE 60
 
 #define VIDEO_WIDTH_MAX  256
 #define VIDEO_HEIGHT_MAX 224
@@ -55,6 +56,8 @@ static retro_input_poll_t inputPollCallback;
 static retro_input_state_t inputCallback;
 static retro_log_printf_t logCallback;
 static retro_set_rumble_state_t rumbleCallback;
+static retro_sensor_get_input_t sensorGetCallback;
+static retro_set_sensor_state_t sensorStateCallback;
 
 static void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args);
 
@@ -76,12 +79,17 @@ static void* data;
 static size_t dataSize;
 static void* savedata;
 static struct mAVStream stream;
+static bool sensorsInitDone;
 static int rumbleUp;
 static int rumbleDown;
 static struct mRumble rumble;
 static struct GBALuminanceSource lux;
 static struct mRotationSource rotation;
-static int luxLevel;
+static bool rotationEnabled;
+static int luxLevelIndex;
+static uint8_t luxLevel;
+static bool luxSensorEnabled;
+static bool luxSensorUsed;
 static struct mLogger logger;
 static struct retro_camera_callback cam;
 static struct mImageSource imageSource;
@@ -91,10 +99,7 @@ static unsigned camHeight;
 static unsigned imcapWidth;
 static unsigned imcapHeight;
 static size_t camStride;
-
-#ifdef HAVE_LIBNX
-static u32 hidSixAxisHandles[4];
-#endif
+static bool envVarsUpdated;
 
 /* Video post processing */
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
@@ -103,27 +108,32 @@ static u32 hidSixAxisHandles[4];
 #define CC_TARGET_GAMMA   2.2f
 #define CC_RGB_MAX        31.0f
 
-#define GBC_CC_R          0.87f
-#define GBC_CC_G          0.66f
-#define GBC_CC_B          0.79f
-#define GBC_CC_RG         0.115f
-#define GBC_CC_RB         0.14f
-#define GBC_CC_GR         0.18f
-#define GBC_CC_GB         0.07f
-#define GBC_CC_BR        -0.05f
-#define GBC_CC_BG         0.225f
+/* > Note: GBC and GBA share almost identical
+ *   colour space, but we maintain independent
+ *   values in case of future adjustments */
+#define GBC_CC_LUM        0.94f
+#define GBC_CC_R          0.82f
+#define GBC_CC_G          0.665f
+#define GBC_CC_B          0.73f
+#define GBC_CC_RG         0.125f
+#define GBC_CC_RB         0.195f
+#define GBC_CC_GR         0.24f
+#define GBC_CC_GB         0.075f
+#define GBC_CC_BR        -0.06f
+#define GBC_CC_BG         0.21f
 #define GBC_CC_GAMMA_ADJ -0.5f
 
-#define GBA_CC_R          0.86f
-#define GBA_CC_G          0.66f
-#define GBA_CC_B          0.81f
-#define GBA_CC_RG         0.11f
-#define GBA_CC_RB         0.1325f
-#define GBA_CC_GR         0.19f
-#define GBA_CC_GB         0.0575f
-#define GBA_CC_BR        -0.05f
-#define GBA_CC_BG         0.23f
-#define GBA_CC_GAMMA_ADJ  0.45f
+#define GBA_CC_LUM        0.94f
+#define GBA_CC_R          0.82f
+#define GBA_CC_G          0.665f
+#define GBA_CC_B          0.73f
+#define GBA_CC_RG         0.125f
+#define GBA_CC_RB         0.195f
+#define GBA_CC_GR         0.24f
+#define GBA_CC_GB         0.075f
+#define GBA_CC_BR        -0.06f
+#define GBA_CC_BG         0.21f
+#define GBA_CC_GAMMA_ADJ  1.0f
 
 static color_t* ccLUT              = NULL;
 static unsigned ccType             = 0;
@@ -137,6 +147,7 @@ static void _initColorCorrection(void) {
 
 	/* Variables */
 	enum GBModel model = GB_MODEL_AUTODETECT;
+	float ccLum;
 	float ccR;
 	float ccG;
 	float ccB;
@@ -196,27 +207,29 @@ static void _initColorCorrection(void) {
 
 	switch (model) {
 		case GB_MODEL_AGB:
-			ccR  = GBA_CC_R;
-			ccG  = GBA_CC_G;
-			ccB  = GBA_CC_B;
-			ccRG = GBA_CC_RG;
-			ccRB = GBA_CC_RB;
-			ccGR = GBA_CC_GR;
-			ccGB = GBA_CC_GB;
-			ccBR = GBA_CC_BR;
-			ccBG = GBA_CC_BG;
+			ccLum = GBA_CC_LUM;
+			ccR   = GBA_CC_R;
+			ccG   = GBA_CC_G;
+			ccB   = GBA_CC_B;
+			ccRG  = GBA_CC_RG;
+			ccRB  = GBA_CC_RB;
+			ccGR  = GBA_CC_GR;
+			ccGB  = GBA_CC_GB;
+			ccBR  = GBA_CC_BR;
+			ccBG  = GBA_CC_BG;
 			adjustedGamma = CC_TARGET_GAMMA + GBA_CC_GAMMA_ADJ;
 			break;
 		case GB_MODEL_CGB:
-			ccR  = GBC_CC_R;
-			ccG  = GBC_CC_G;
-			ccB  = GBC_CC_B;
-			ccRG = GBC_CC_RG;
-			ccRB = GBC_CC_RB;
-			ccGR = GBC_CC_GR;
-			ccGB = GBC_CC_GB;
-			ccBR = GBC_CC_BR;
-			ccBG = GBC_CC_BG;
+			ccLum = GBC_CC_LUM;
+			ccR   = GBC_CC_R;
+			ccG   = GBC_CC_G;
+			ccB   = GBC_CC_B;
+			ccRG  = GBC_CC_RG;
+			ccRB  = GBC_CC_RB;
+			ccGR  = GBC_CC_GR;
+			ccGB  = GBC_CC_GB;
+			ccBR  = GBC_CC_BR;
+			ccBG  = GBC_CC_BG;
 			adjustedGamma = CC_TARGET_GAMMA + GBC_CC_GAMMA_ADJ;
 			break;
 		default:
@@ -254,9 +267,9 @@ static void _initColorCorrection(void) {
 		float gFloat = pow((float)g * rgbMaxInv, adjustedGamma);
 		float bFloat = pow((float)b * rgbMaxInv, adjustedGamma);
 		/* Perform colour mangling */
-		float rCorrect = (ccR  * rFloat) + (ccGR * gFloat) + (ccBR * bFloat);
-		float gCorrect = (ccRG * rFloat) + (ccG  * gFloat) + (ccBG * bFloat);
-		float bCorrect = (ccRB * rFloat) + (ccGB * gFloat) + (ccB  * bFloat);
+		float rCorrect = ccLum * ((ccR  * rFloat) + (ccGR * gFloat) + (ccBR * bFloat));
+		float gCorrect = ccLum * ((ccRG * rFloat) + (ccG  * gFloat) + (ccBG * bFloat));
+		float bCorrect = ccLum * ((ccRB * rFloat) + (ccGB * gFloat) + (ccB  * bFloat));
 		/* Range check... */
 		rCorrect = rCorrect > 0.0f ? rCorrect : 0.0f;
 		gCorrect = gCorrect > 0.0f ? gCorrect : 0.0f;
@@ -278,7 +291,6 @@ static void _initColorCorrection(void) {
 }
 
 static void _loadColorCorrectionSettings(void) {
-
 	struct retro_variable var;
 	unsigned oldCcType = ccType;
 	ccType = 0;
@@ -986,6 +998,29 @@ static void _deinitPostProcessing(void) {
 
 #endif
 
+static void _initSensors(void) {
+	if(sensorsInitDone) {
+		return;
+	}
+
+	struct retro_sensor_interface sensorInterface;
+	if (environCallback(RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE, &sensorInterface)) {
+		sensorGetCallback = sensorInterface.get_sensor_input;
+		sensorStateCallback = sensorInterface.set_sensor_state;
+
+		if(sensorStateCallback(0, RETRO_SENSOR_ACCELEROMETER_ENABLE, EVENT_RATE)
+			&& sensorStateCallback(0, RETRO_SENSOR_GYROSCOPE_ENABLE, EVENT_RATE)) {
+			rotationEnabled = true;
+		}
+
+		if(sensorStateCallback(0, RETRO_SENSOR_ILLUMINANCE_ENABLE, EVENT_RATE)) {
+			luxSensorEnabled = true;
+		}
+	}
+
+	sensorsInitDone = true;
+}
+
 static void _reloadSettings(void) {
 	struct mCoreOptions opts = {
 		.useBios = true,
@@ -1094,15 +1129,15 @@ void retro_set_input_state(retro_input_state_t input) {
 
 void retro_get_system_info(struct retro_system_info* info) {
 #ifdef GEKKO
-   info->need_fullpath = true;
+	info->need_fullpath = true;
 #else
-   info->need_fullpath = false;
+	info->need_fullpath = false;
 #endif
 	info->valid_extensions = "gba|gb|gbc";
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
 #endif
-	info->library_version = "0.8.1" GIT_VERSION;
+	info->library_version = "0.8.3" GIT_VERSION;
 	info->library_name = "mGBA";
 	info->block_extract = false;
 }
@@ -1174,19 +1209,19 @@ void retro_init(void) {
 		rumbleCallback = 0;
 	}
 
-#ifdef HAVE_LIBNX
-	hidGetSixAxisSensorHandles(&hidSixAxisHandles[0], 2, CONTROLLER_PLAYER_1, TYPE_JOYCON_PAIR);
-	hidGetSixAxisSensorHandles(&hidSixAxisHandles[2], 1, CONTROLLER_PLAYER_1, TYPE_PROCONTROLLER);
-	hidGetSixAxisSensorHandles(&hidSixAxisHandles[3], 1, CONTROLLER_HANDHELD, TYPE_HANDHELD);
-	hidStartSixAxisSensor(hidSixAxisHandles[0]);
-	hidStartSixAxisSensor(hidSixAxisHandles[1]);
-	hidStartSixAxisSensor(hidSixAxisHandles[2]);
-	hidStartSixAxisSensor(hidSixAxisHandles[3]);
-#endif
+	sensorsInitDone = false;
+	sensorGetCallback = 0;
+	sensorStateCallback = 0;
+
+	rotationEnabled = false;
 	rotation.readTiltX = _readTiltX;
 	rotation.readTiltY = _readTiltY;
 	rotation.readGyroZ = _readGyroZ;
 
+	envVarsUpdated = true;
+	luxSensorUsed = false;
+	luxSensorEnabled = false;
+	luxLevelIndex = 0;
 	luxLevel = 0;
 	lux.readLuminance = _readLux;
 	lux.sample = _updateLux;
@@ -1223,12 +1258,15 @@ void retro_deinit(void) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 	_deinitPostProcessing();
 #endif
-#ifdef HAVE_LIBNX
-	hidStopSixAxisSensor(hidSixAxisHandles[0]);
-	hidStopSixAxisSensor(hidSixAxisHandles[1]);
-	hidStopSixAxisSensor(hidSixAxisHandles[2]);
-	hidStopSixAxisSensor(hidSixAxisHandles[3]);
-#endif
+
+	if(sensorStateCallback) {
+		sensorStateCallback(0, RETRO_SENSOR_ACCELEROMETER_DISABLE, EVENT_RATE);
+		sensorStateCallback(0, RETRO_SENSOR_GYROSCOPE_DISABLE, EVENT_RATE);
+		sensorStateCallback(0, RETRO_SENSOR_ILLUMINANCE_DISABLE, EVENT_RATE);
+	}
+
+	rotationEnabled = false;
+	luxSensorEnabled = false;
 }
 
 #define RDKEYP1(key) inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_##key)
@@ -1236,39 +1274,43 @@ static int turboclock = 0;
 static bool indownstate = true;
 
 int16_t cycleturbo(bool x/*turbo A*/, bool y/*turbo B*/, bool l2/*turbo L*/, bool r2/*turbo R*/) {
-   int16_t buttons = 0;
-   turboclock++;
-   if (turboclock >= 2) {
-      turboclock = 0;
-      indownstate = !indownstate;
-   }
-   
-   if (x) {
-      buttons |= indownstate << 0;
-   }
-   
-   if (y) {
-      buttons |= indownstate << 1;
-   }
-   
-   if (l2) {
-      buttons |= indownstate << 9;
-   }
-   
-   if (r2) {
-      buttons |= indownstate << 8;
-   }
-   
-   return buttons;
+	int16_t buttons = 0;
+	turboclock++;
+	if (turboclock >= 2) {
+		turboclock = 0;
+		indownstate = !indownstate;
+	}
+
+	if (x) {
+		buttons |= indownstate << 0;
+	}
+
+	if (y) {
+		buttons |= indownstate << 1;
+	}
+
+	if (l2) {
+		buttons |= indownstate << 9;
+	}
+
+	if (r2) {
+	buttons |= indownstate << 8;
+	}
+
+	return buttons;
 }
 
 
 void retro_run(void) {
 	uint16_t keys;
+
+	_initSensors();
 	inputPollCallback();
 
 	bool updated = false;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		envVarsUpdated = true;
+
 		struct retro_variable var = {
 			.key = "mgba_allow_opposing_directions",
 			.value = 0
@@ -1311,29 +1353,31 @@ void retro_run(void) {
 	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN)) << 7;
 	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) << 8;
 	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) << 9;
-   
-   //turbo keys
-   keys |= cycleturbo(RDKEYP1(X),RDKEYP1(Y),RDKEYP1(L2),RDKEYP1(R2));
-   
+
+	//turbo keys
+	keys |= cycleturbo(RDKEYP1(X),RDKEYP1(Y),RDKEYP1(L2),RDKEYP1(R2));
+
 	core->setKeys(core, keys);
 
-	static bool wasAdjustingLux = false;
-	if (wasAdjustingLux) {
-		wasAdjustingLux = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) ||
-		                  inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
-	} else {
-		if (inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
-			++luxLevel;
-			if (luxLevel > 10) {
-				luxLevel = 10;
+	if(!luxSensorUsed) {
+		static bool wasAdjustingLux = false;
+		if (wasAdjustingLux) {
+			wasAdjustingLux = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) ||
+			                  inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
+		} else {
+			if (inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
+				++luxLevelIndex;
+				if (luxLevelIndex > 10) {
+					luxLevelIndex = 10;
+				}
+				wasAdjustingLux = true;
+			} else if (inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3)) {
+				--luxLevelIndex;
+				if (luxLevelIndex < 0) {
+					luxLevelIndex = 0;
+				}
+				wasAdjustingLux = true;
 			}
-			wasAdjustingLux = true;
-		} else if (inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3)) {
-			--luxLevel;
-			if (luxLevel < 0) {
-				luxLevel = 0;
-			}
-			wasAdjustingLux = true;
 		}
 	}
 
@@ -1960,35 +2004,47 @@ static void _updateLux(struct GBALuminanceSource* lux) {
 		.key = "mgba_solar_sensor_level",
 		.value = 0
 	};
+	bool luxVarUpdated = envVarsUpdated;
 
-	bool updated = false;
-	if (!environCallback(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) || !updated) {
-		return;
-	}
-	if (!environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value) {
-		return;
+	if (luxVarUpdated && (!environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value)) {
+		luxVarUpdated = false;
 	}
 
-	char* end;
-	int newLuxLevel = strtol(var.value, &end, 10);
-	if (!*end) {
-		if (newLuxLevel > 10) {
-			luxLevel = 10;
-		} else if (newLuxLevel < 0) {
-			luxLevel = 0;
-		} else {
-			luxLevel = newLuxLevel;
+	if(luxVarUpdated) {
+		luxSensorUsed = strcmp(var.value, "sensor") == 0;
+	}
+
+	if(luxSensorUsed) {
+		float fLux = luxSensorEnabled ? sensorGetCallback(0, RETRO_SENSOR_ILLUMINANCE) : 0.0f;
+		luxLevel = cbrtf(fLux) * 8;
+	} else {
+		if(luxVarUpdated) {
+			char* end;
+			int newLuxLevelIndex = strtol(var.value, &end, 10);
+
+			if (!*end) {
+				if (newLuxLevelIndex > 10) {
+					luxLevelIndex = 10;
+				} else if (newLuxLevelIndex < 0) {
+					luxLevelIndex = 0;
+				} else {
+					luxLevelIndex = newLuxLevelIndex;
+				}
+			}
+		}
+
+		luxLevel = 0x16;
+		if (luxLevelIndex > 0) {
+			luxLevel += GBA_LUX_LEVELS[luxLevelIndex - 1];
 		}
 	}
+
+	envVarsUpdated = false;
 }
 
 static uint8_t _readLux(struct GBALuminanceSource* lux) {
 	UNUSED(lux);
-	int value = 0x16;
-	if (luxLevel > 0) {
-		value += GBA_LUX_LEVELS[luxLevel - 1];
-	}
-	return 0xFF - value;
+	return 0xFF - luxLevel;
 }
 
 static void _updateCamera(const uint32_t* buffer, unsigned width, unsigned height, size_t pitch) {
@@ -2058,32 +2114,32 @@ static void _requestImage(struct mImageSource* image, const void** buffer, size_
 static int32_t _readTiltX(struct mRotationSource* source) {
 	UNUSED(source);
 	int32_t tiltX = 0;
-#ifdef HAVE_LIBNX
-	SixAxisSensorValues sixaxis;
-	hidSixAxisSensorValuesRead(&sixaxis, CONTROLLER_P1_AUTO, 1);
-	tiltX = sixaxis.accelerometer.x * 3e8f;
-#endif
+
+	if(rotationEnabled) {
+		tiltX = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_X) * 3e8f;
+	}
+
 	return tiltX;
 }
 
 static int32_t _readTiltY(struct mRotationSource* source) {
 	UNUSED(source);
 	int32_t tiltY = 0;
-#ifdef HAVE_LIBNX
-	SixAxisSensorValues sixaxis;
-	hidSixAxisSensorValuesRead(&sixaxis, CONTROLLER_P1_AUTO, 1);
-	tiltY = sixaxis.accelerometer.y * -3e8f;
-#endif
+
+	if(rotationEnabled) {
+		tiltY = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_Y) * -3e8f;
+	}
+
 	return tiltY;
 }
 
 static int32_t _readGyroZ(struct mRotationSource* source) {
 	UNUSED(source);
 	int32_t gyroZ = 0;
-#ifdef HAVE_LIBNX
-	SixAxisSensorValues sixaxis;
-	hidSixAxisSensorValuesRead(&sixaxis, CONTROLLER_P1_AUTO, 1);
-	gyroZ = sixaxis.gyroscope.z * -1.1e9f;
-#endif
+
+	if(rotationEnabled) {
+		gyroZ = sensorGetCallback(0, RETRO_SENSOR_GYROSCOPE_Z) * -1.1e9f;
+	}
+
 	return gyroZ;
 }
