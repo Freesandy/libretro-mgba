@@ -59,6 +59,8 @@ static retro_set_rumble_state_t rumbleCallback;
 static retro_sensor_get_input_t sensorGetCallback;
 static retro_set_sensor_state_t sensorStateCallback;
 
+static bool libretro_supports_bitmasks = false;
+
 static void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args);
 
 static void _postAudioBuffer(struct mAVStream*, blip_t* left, blip_t* right);
@@ -328,9 +330,7 @@ enum frame_blend_method
 {
    FRAME_BLEND_NONE = 0,
    FRAME_BLEND_MIX,
-   FRAME_BLEND_MIX_FAST,
    FRAME_BLEND_MIX_SMART,
-   FRAME_BLEND_MIX_SMART_FAST,
    FRAME_BLEND_LCD_GHOSTING,
    FRAME_BLEND_LCD_GHOSTING_FAST
 };
@@ -354,7 +354,7 @@ static bool _allocateOutputBufferPrev(color_t** buf) {
 			return false;
 		}
 	}
-	memset(*buf, 0xFF, VIDEO_BUFF_SIZE);
+	memset(*buf, 0xFFFF, VIDEO_BUFF_SIZE);
 	return true;
 }
 
@@ -402,14 +402,12 @@ static void _initFrameBlend(void) {
 	 * the next frame */
 	switch (frameBlendType) {
 		case FRAME_BLEND_MIX:
-		case FRAME_BLEND_MIX_FAST:
 			/* Simple 50:50 blending requires a single buffer */
 			if (!_allocateOutputBufferPrev(&outputBufferPrev1)) {
 				return;
 			}
 			break;
 		case FRAME_BLEND_MIX_SMART:
-		case FRAME_BLEND_MIX_SMART_FAST:
 			/* Smart 50:50 blending requires three buffers */
 			if (!_allocateOutputBufferPrev(&outputBufferPrev1)) {
 				return;
@@ -490,12 +488,8 @@ static void _loadFrameBlendSettings(void) {
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		if (strcmp(var.value, "mix") == 0) {
 			frameBlendType = FRAME_BLEND_MIX;
-		} else if (strcmp(var.value, "mix_fast") == 0) {
-			frameBlendType = FRAME_BLEND_MIX_FAST;
 		} else if (strcmp(var.value, "mix_smart") == 0) {
 			frameBlendType = FRAME_BLEND_MIX_SMART;
-		} else if (strcmp(var.value, "mix_smart_fast") == 0) {
-			frameBlendType = FRAME_BLEND_MIX_SMART_FAST;
 		} else if (strcmp(var.value, "lcd_ghosting") == 0) {
 			frameBlendType = FRAME_BLEND_LCD_GHOSTING;
 		} else if (strcmp(var.value, "lcd_ghosting_fast") == 0) {
@@ -552,59 +546,24 @@ static void videoPostProcessMix(unsigned width, unsigned height) {
 			/* Store colours for next frame */
 			*(srcPrev + x) = rgbCurr;
 
-			/* Unpack colours and convert to float */
-			float rCurr = (float)(rgbCurr >> 11 & 0x1F);
-			float gCurr = (float)(rgbCurr >>  6 & 0x1F);
-			float bCurr = (float)(rgbCurr       & 0x1F);
+			/* Unpack colours */
+			color_t rCurr = rgbCurr >> 11 & 0x1F;
+			color_t gCurr = rgbCurr >>  6 & 0x1F;
+			color_t bCurr = rgbCurr       & 0x1F;
 
-			float rPrev = (float)(rgbPrev >> 11 & 0x1F);
-			float gPrev = (float)(rgbPrev >>  6 & 0x1F);
-			float bPrev = (float)(rgbPrev       & 0x1F);
+			color_t rPrev = rgbPrev >> 11 & 0x1F;
+			color_t gPrev = rgbPrev >>  6 & 0x1F;
+			color_t bPrev = rgbPrev       & 0x1F;
 
-			/* Mix colours for current frame and convert back to color_t */
-			color_t rMix = (color_t)(((rCurr * 0.5f) + (rPrev * 0.5f)) + 0.5f) & 0x1F;
-			color_t gMix = (color_t)(((gCurr * 0.5f) + (gPrev * 0.5f)) + 0.5f) & 0x1F;
-			color_t bMix = (color_t)(((bCurr * 0.5f) + (bPrev * 0.5f)) + 0.5f) & 0x1F;
+			/* Mix colours */
+			color_t rMix  = (rCurr >> 1) + (rPrev >> 1) + (((rCurr & 0x1) + (rPrev & 0x1)) >> 1);
+			color_t gMix  = (gCurr >> 1) + (gPrev >> 1) + (((gCurr & 0x1) + (gPrev & 0x1)) >> 1);
+			color_t bMix  = (bCurr >> 1) + (bPrev >> 1) + (((bCurr & 0x1) + (bPrev & 0x1)) >> 1);
 
 			/* Repack colours for current frame */
 			*(dst + x) = colorCorrectionEnabled ?
 					*(ccLUT + (rMix << 11 | gMix << 6 | bMix)) :
 							rMix << 11 | gMix << 6 | bMix;
-		}
-		srcCurr += VIDEO_WIDTH_MAX;
-		srcPrev += VIDEO_WIDTH_MAX;
-		dst     += VIDEO_WIDTH_MAX;
-	}
-}
-
-static void videoPostProcessMixFast(unsigned width, unsigned height) {
-
-	color_t *srcCurr = outputBuffer;
-	color_t *srcPrev = outputBufferPrev1;
-	color_t *dst     = ppOutputBuffer;
-	size_t x, y;
-
-	for (y = 0; y < height; y++) {
-		for (x = 0; x < width; x++) {
-
-			/* Get colours from current + previous frames */
-			color_t rgbCurr = *(srcCurr + x);
-			color_t rgbPrev = *(srcPrev + x);
-
-			/* Store colours for next frame */
-			*(srcPrev + x) = rgbCurr;
-
-			/* Mix colours for current frame
-			 * > Fast one-shot method (bit twiddling)
-			 * > Causes mild darkening of colours due to
-			 *   rounding errors */
-			color_t rgbMix =   ((((rgbCurr >> 11) & 0x1F) >> 1) + (((rgbPrev >> 11) & 0x1F) >> 1)) << 11
-								  | ((((rgbCurr >>  6) & 0x1F) >> 1) + (((rgbPrev >>  6) & 0x1F) >> 1)) << 6
-								  | ((( rgbCurr        & 0x1F) >> 1) + (( rgbPrev        & 0x1F) >> 1));
-
-			/* Assign colours for current frame */
-			*(dst + x) = colorCorrectionEnabled ?
-					*(ccLUT + rgbMix) : rgbMix;
 		}
 		srcCurr += VIDEO_WIDTH_MAX;
 		srcPrev += VIDEO_WIDTH_MAX;
@@ -643,81 +602,24 @@ static void videoPostProcessMixSmart(unsigned width, unsigned height) {
 			    (rgbCurr != rgbPrev3) &&
 			    (rgbPrev1 != rgbPrev2)) {
 
-				/* Unpack colours and convert to float */
-				float rCurr = (float)(rgbCurr >> 11 & 0x1F);
-				float gCurr = (float)(rgbCurr >>  6 & 0x1F);
-				float bCurr = (float)(rgbCurr       & 0x1F);
+				/* Unpack colours */
+				color_t rCurr  = rgbCurr >> 11 & 0x1F;
+				color_t gCurr  = rgbCurr >>  6 & 0x1F;
+				color_t bCurr  = rgbCurr       & 0x1F;
 
-				float rPrev1 = (float)(rgbPrev1 >> 11 & 0x1F);
-				float gPrev1 = (float)(rgbPrev1 >>  6 & 0x1F);
-				float bPrev1 = (float)(rgbPrev1       & 0x1F);
+				color_t rPrev1 = rgbPrev1 >> 11 & 0x1F;
+				color_t gPrev1 = rgbPrev1 >>  6 & 0x1F;
+				color_t bPrev1 = rgbPrev1       & 0x1F;
 
-				/* Mix colours for current frame and convert back to color_t */
-				color_t rMix = (color_t)(((rCurr * 0.5f) + (rPrev1 * 0.5f)) + 0.5f) & 0x1F;
-				color_t gMix = (color_t)(((gCurr * 0.5f) + (gPrev1 * 0.5f)) + 0.5f) & 0x1F;
-				color_t bMix = (color_t)(((bCurr * 0.5f) + (bPrev1 * 0.5f)) + 0.5f) & 0x1F;
+				/* Mix colours */
+				color_t rMix   = (rCurr >> 1) + (rPrev1 >> 1) + (((rCurr & 0x1) + (rPrev1 & 0x1)) >> 1);
+				color_t gMix   = (gCurr >> 1) + (gPrev1 >> 1) + (((gCurr & 0x1) + (gPrev1 & 0x1)) >> 1);
+				color_t bMix   = (bCurr >> 1) + (bPrev1 >> 1) + (((bCurr & 0x1) + (bPrev1 & 0x1)) >> 1);
 
 				/* Repack colours for current frame */
 				*(dst + x) = colorCorrectionEnabled ?
 						*(ccLUT + (rMix << 11 | gMix << 6 | bMix)) :
 								rMix << 11 | gMix << 6 | bMix;
-
-			} else {
-				/* Just use colours for current frame */
-				*(dst + x) = colorCorrectionEnabled ?
-						*(ccLUT + rgbCurr) :	rgbCurr;
-			}
-		}
-		srcCurr  += VIDEO_WIDTH_MAX;
-		srcPrev1 += VIDEO_WIDTH_MAX;
-		srcPrev2 += VIDEO_WIDTH_MAX;
-		srcPrev3 += VIDEO_WIDTH_MAX;
-		dst      += VIDEO_WIDTH_MAX;
-	}
-}
-
-static void videoPostProcessMixSmartFast(unsigned width, unsigned height) {
-
-	color_t *srcCurr  = outputBuffer;
-	color_t *srcPrev1 = outputBufferPrev1;
-	color_t *srcPrev2 = outputBufferPrev2;
-	color_t *srcPrev3 = outputBufferPrev3;
-	color_t *dst      = ppOutputBuffer;
-	size_t x, y;
-
-	for (y = 0; y < height; y++) {
-		for (x = 0; x < width; x++) {
-
-			/* Get colours from current + previous frames */
-			color_t rgbCurr  = *(srcCurr + x);
-			color_t rgbPrev1 = *(srcPrev1 + x);
-			color_t rgbPrev2 = *(srcPrev2 + x);
-			color_t rgbPrev3 = *(srcPrev3 + x);
-
-			/* Store colours for next frame */
-			*(srcPrev1 + x) = rgbCurr;
-			*(srcPrev2 + x) = rgbPrev1;
-			*(srcPrev3 + x) = rgbPrev2;
-
-			/* Determine whether mixing is required
-			 * i.e. whether alternate frames have the same pixel colour,
-			 * but adjacent frames do not */
-			if (((rgbCurr == rgbPrev2) || (rgbPrev1 == rgbPrev3)) &&
-				 (rgbCurr != rgbPrev1) &&
-			    (rgbCurr != rgbPrev3) &&
-			    (rgbPrev1 != rgbPrev2)) {
-
-				/* Mix colours for current frame
-				 * > Fast one-shot method (bit twiddling)
-				 * > Causes mild darkening of colours due to
-				 *   rounding errors */
-				color_t rgbMix =   ((((rgbCurr >> 11) & 0x1F) >> 1) + (((rgbPrev1 >> 11) & 0x1F) >> 1)) << 11
-									  | ((((rgbCurr >>  6) & 0x1F) >> 1) + (((rgbPrev1 >>  6) & 0x1F) >> 1)) << 6
-									  | ((( rgbCurr        & 0x1F) >> 1) + (( rgbPrev1        & 0x1F) >> 1));
-
-				/* Assign colours for current frame */
-				*(dst + x) = colorCorrectionEnabled ?
-						*(ccLUT + rgbMix) : rgbMix;
 
 			} else {
 				/* Just use colours for current frame */
@@ -887,7 +789,7 @@ static void _initPostProcessing(void) {
 		if (!ppOutputBuffer) {
 			return;
 		}
-		memset(ppOutputBuffer, 0xFF, VIDEO_BUFF_SIZE);
+		memset(ppOutputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
 	}
 
 	/* Assign post processing function */
@@ -896,14 +798,8 @@ static void _initPostProcessing(void) {
 			case FRAME_BLEND_MIX:
 				videoPostProcess = videoPostProcessMix;
 				return;
-			case FRAME_BLEND_MIX_FAST:
-				videoPostProcess = videoPostProcessMixFast;
-				return;
 			case FRAME_BLEND_MIX_SMART:
 				videoPostProcess = videoPostProcessMixSmart;
-				return;
-			case FRAME_BLEND_MIX_SMART_FAST:
-				videoPostProcess = videoPostProcessMixSmartFast;
 				return;
 			case FRAME_BLEND_LCD_GHOSTING:
 				videoPostProcess = videoPostProcessLcdGhost;
@@ -1244,6 +1140,9 @@ void retro_init(void) {
 	imageSource.startRequestImage = _startImage;
 	imageSource.stopRequestImage = _stopImage;
 	imageSource.requestImage = _requestImage;
+
+	if (environCallback(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
+		libretro_supports_bitmasks = true;
 }
 
 void retro_deinit(void) {
@@ -1267,9 +1166,10 @@ void retro_deinit(void) {
 
 	rotationEnabled = false;
 	luxSensorEnabled = false;
+	libretro_supports_bitmasks = false;
 }
 
-#define RDKEYP1(key) inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_##key)
+#define RDKEYP1(key) (joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_##key))
 static int turboclock = 0;
 static bool indownstate = true;
 
@@ -1342,17 +1242,28 @@ void retro_run(void) {
 #endif
 	}
 
+	unsigned i;
+	int16_t joypad_bits;
+	if (libretro_supports_bitmasks)
+		joypad_bits = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+	else
+	{
+		joypad_bits = 0;
+		for (i = 0; i < (RETRO_DEVICE_ID_JOYPAD_R3+1); i++)
+			joypad_bits |= inputCallback(0, RETRO_DEVICE_JOYPAD, 0, i) ? (1 << i) : 0;
+	}
+
 	keys = 0;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)) << 0;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) << 1;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT)) << 2;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START)) << 3;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT)) << 4;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT)) << 5;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP)) << 6;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN)) << 7;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R)) << 8;
-	keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) << 9;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_A))) << 0;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_B))) << 1;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))) << 2;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_START))) << 3;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))) << 4;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))) << 5;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_UP))) << 6;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))) << 7;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_R))) << 8;
+	keys |= (!!(joypad_bits & (1 << RETRO_DEVICE_ID_JOYPAD_L))) << 9;
 
 	//turbo keys
 	keys |= cycleturbo(RDKEYP1(X),RDKEYP1(Y),RDKEYP1(L2),RDKEYP1(R2));
@@ -1679,7 +1590,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 #else
 	outputBuffer = malloc(VIDEO_BUFF_SIZE);
 #endif
-	memset(outputBuffer, 0xFF, VIDEO_BUFF_SIZE);
+	memset(outputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
 	core->setVideoBuffer(core, outputBuffer, VIDEO_WIDTH_MAX);
 
 	core->setAudioBufferSize(core, SAMPLES);
