@@ -146,6 +146,44 @@ struct retro_core_option_definition option_defs_us[] = {
    {
       "mgba_frameskip",
       "跳帧",
+      "跳过一定帧数, 以改善性能, 代价是牺牲画面流畅度. '自动' 根据前台设置跳帧. '自动 (阈值)' 利用跳帧阈值(%)的设定跳帧. '固定间隔'利用跳帧间隔的设定跳帧.",
+      {
+         { "disabled",       NULL },
+         { "auto",           "自动" },
+         { "auto_threshold", "自动 (阈值)" },
+         { "fixed_interval", "固定间隔" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "mgba_frameskip_threshold",
+      "跳帧阈值(%)",
+      "当'帧跳过'设置为自动(阈值)'时, 低于指定音频缓冲区占用阈值(百分比)时跳帧. 较高的值可降低音频破音的风险. ",
+      {
+         { "15", NULL },
+         { "18", NULL },
+         { "21", NULL },
+         { "24", NULL },
+         { "27", NULL },
+         { "30", NULL },
+         { "33", NULL },
+         { "36", NULL },
+         { "39", NULL },
+         { "42", NULL },
+         { "45", NULL },
+         { "48", NULL },
+         { "51", NULL },
+         { "54", NULL },
+         { "57", NULL },
+         { "60", NULL },
+         { NULL, NULL },
+      },
+      "33"
+   },
+   {
+      "mgba_frameskip_interval",
+      "跳帧间隔",
       "跳过一定帧数, 以改善性能, 代价是牺牲画面流畅度. \n"
       "这里设置的值是每渲染一帧后跳过的帧数 - 即'0' = 60fps, '1' = 30fps, '2' = 20fps, 以此类推. ",
       {
