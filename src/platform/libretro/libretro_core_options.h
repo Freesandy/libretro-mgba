@@ -51,29 +51,29 @@ extern "C" {
 struct retro_core_option_definition option_defs_us[] = {
    {
       "mgba_solar_sensor_level",
-      "Solar Sensor Level",
-      "Sets ambient sunlight intensity. Can be used by games that included a solar sensor in their cartridges, e.g: the Boktai series.",
+      "光线传感器级别",
+      "设置环境光强度. \n"
+      "可以在卡带上有光线传感器的游戏上使用, 例如《我们的太阳》系列. ",
       {
-         { "sensor",  "Use device sensor if available" },
-         { "0",       NULL },
-         { "1",       NULL },
-         { "2",       NULL },
-         { "3",       NULL },
-         { "4",       NULL },
-         { "5",       NULL },
-         { "6",       NULL },
-         { "7",       NULL },
-         { "8",       NULL },
-         { "9",       NULL },
-         { "10",      NULL },
-         { NULL,      NULL },
+         { "0",  NULL },
+         { "1",  NULL },
+         { "2",  NULL },
+         { "3",  NULL },
+         { "4",  NULL },
+         { "5",  NULL },
+         { "6",  NULL },
+         { "7",  NULL },
+         { "8",  NULL },
+         { "9",  NULL },
+         { "10", NULL },
+         { NULL, NULL },
       },
       "0"
    },
    {
       "mgba_allow_opposing_directions",
-      "Allow Opposing Directional Input",
-      "Enabling this will allow pressing / quickly alternating / holding both left and right (or up and down) directions at the same time. This may cause movement-based glitches.",
+      "允许相反方向输入",
+      "允许同时按下/快速切换/同时按住左右或者上下方向键, 这可能会引起移动方面的问题. ",
       {
          { "no",  "disabled" },
          { "yes", "enabled" },
@@ -83,10 +83,11 @@ struct retro_core_option_definition option_defs_us[] = {
    },
    {
       "mgba_gb_model",
-      "Game Boy Model (requires restart)",
-      "Runs loaded content with a specific Game Boy model. 'Autodetect' will select the most appropriate model for the current game.",
+      "Game Boy型号 (须重启)",
+      "使用指定的Game Boy型号运行游戏. \n"
+      "'自动检测'会为当前游戏选择最适合的型号. ",
       {
-         { "Autodetect",       NULL },
+         { "Autodetect",       "自动检测" },
          { "Game Boy",         NULL },
          { "Super Game Boy",   NULL },
          { "Game Boy Color",   NULL },
@@ -97,91 +98,56 @@ struct retro_core_option_definition option_defs_us[] = {
    },
    {
       "mgba_use_bios",
-      "Use BIOS File if Found (requires restart)",
-      "Use official BIOS/bootloader for emulated hardware, if present in RetroArch's system directory.",
+      "使用BIOS文件 (须重启)",
+      "使用官方BIOS/引导程序, 如果在RetroArch系统目录下有的话. ",
       {
-         { "ON",  NULL },
-         { "OFF", NULL },
+         { "ON",  "启用" },
+         { "OFF", "禁用" },
          { NULL, NULL },
       },
       "ON"
    },
    {
       "mgba_skip_bios",
-      "Skip BIOS Intro (requires restart)",
-      "When using an official BIOS/bootloader, skip the start-up logo animation. This setting is ignored when 'Use BIOS File if Found' is disabled.",
+      "跳过BIOS启动画面 (须重启)",
+      "使用官方BIOS/引导程序时, 跳过启动标题画面. \n"
+      "'使用BIOS文件 (须重启)'禁用时, 此项忽略. ",
       {
-         { "OFF", NULL },
-         { "ON",  NULL },
+         { "OFF", "禁用" },
+         { "ON",  "启用" },
          { NULL, NULL },
       },
       "OFF"
    },
    {
       "mgba_sgb_borders",
-      "Use Super Game Boy Borders (requires restart)",
-      "Display Super Game Boy borders when running Super Game Boy enhanced games.",
+      "使用Super Game Boy边框 (须重启)",
+      "运行Super Game Boy增强游戏时, 显示Super Game Boy边框. ",
       {
-         { "ON",  NULL },
-         { "OFF", NULL },
+         { "ON",  "启用" },
+         { "OFF", "禁用" },
          { NULL, NULL },
       },
       "ON"
    },
    {
       "mgba_idle_optimization",
-      "Idle Loop Removal",
-      "Reduce system load by optimizing so-called 'idle-loops' - sections in the code where nothing happens, but the CPU runs at full speed (like a car revving in neutral). Improves performance, and should be enabled on low-end hardware.",
+      "移除空循环",
+      "缩短系统载入时间, 通过优化'空循环' - 这些代码不做任何事, 但是CPU全速运转 (类似汽车的空档运转). \n"
+      "此项可以提升性能, 在低端设备上应该启用. ",
       {
-         { "Remove Known",      NULL },
-         { "Detect and Remove", NULL },
-         { "Don't Remove",      NULL },
+         { "Remove Known",      "移除已知代码" },
+         { "Detect and Remove", "检测并移除" },
+         { "Don't Remove",      "不移除" },
          { NULL, NULL },
       },
       "Remove Known"
    },
    {
       "mgba_frameskip",
-      "Frameskip",
-      "Skip frames to avoid audio buffer under-run (crackling). Improves performance at the expense of visual smoothness. 'Auto' skips frames when advised by the frontend. 'Auto (Threshold)' utilises the 'Frameskip Threshold (%)' setting. 'Fixed Interval' utilises the 'Frameskip Interval' setting.",
-      {
-         { "disabled",       NULL },
-         { "auto",           "Auto" },
-         { "auto_threshold", "Auto (Threshold)" },
-         { "fixed_interval", "Fixed Interval" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
-      "mgba_frameskip_threshold",
-      "Frameskip Threshold (%)",
-      "When 'Frameskip' is set to 'Auto (Threshold)', specifies the audio buffer occupancy threshold (percentage) below which frames will be skipped. Higher values reduce the risk of crackling by causing frames to be dropped more frequently.",
-      {
-         { "15", NULL },
-         { "18", NULL },
-         { "21", NULL },
-         { "24", NULL },
-         { "27", NULL },
-         { "30", NULL },
-         { "33", NULL },
-         { "36", NULL },
-         { "39", NULL },
-         { "42", NULL },
-         { "45", NULL },
-         { "48", NULL },
-         { "51", NULL },
-         { "54", NULL },
-         { "57", NULL },
-         { "60", NULL },
-         { NULL, NULL },
-      },
-      "33"
-   },
-   {
-      "mgba_frameskip_interval",
-      "Frameskip Interval",
-      "When 'Frameskip' is set to 'Fixed Interval', the value set here is the number of frames omitted after a frame is rendered - i.e. '0' = 60fps, '1' = 30fps, '2' = 15fps, etc.",
+      "跳帧",
+      "跳过一定帧数, 以改善性能, 代价是牺牲画面流畅度. \n"
+      "这里设置的值是每渲染一帧后跳过的帧数 - 即'0' = 60fps, '1' = 30fps, '2' = 20fps, 以此类推. ",
       {
          { "0",  NULL },
          { "1",  NULL },
@@ -201,39 +167,44 @@ struct retro_core_option_definition option_defs_us[] = {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
    {
       "mgba_color_correction",
-      "Color Correction",
-      "Adjusts output colors to match the display of real GBA/GBC hardware.",
+      "色彩校正",
+      "调整输出色彩以匹配真实GBA/GBC的显示效果. ",
       {
-         { "OFF",  NULL },
+         { "OFF",  "禁用" },
          { "GBA",  "Game Boy Advance" },
          { "GBC",  "Game Boy Color" },
-         { "Auto", NULL },
+         { "Auto", "自动" },
          { NULL, NULL },
       },
       "OFF"
    },
    {
       "mgba_interframe_blending",
-      "Interframe Blending",
-      "Simulates LCD ghosting effects. 'Simple' performs a 50:50 mix of the current and previous frames. 'Smart' attempts to detect screen flickering, and only performs a 50:50 mix on affected pixels. 'LCD Ghosting' mimics natural LCD response times by combining multiple buffered frames. 'Simple' or 'Smart' blending is required when playing games that aggressively exploit LCD ghosting for transparency effects (Wave Race, Chikyuu Kaihou Gun ZAS, F-Zero, the Boktai series...).",
+      "帧间混合",
+      "模拟LCD屏幕鬼影效果. \n"
+      "'简单'以50:50比例混合当前帧和上一帧. '只能'尝试检测屏幕闪烁, 只对受影响的像素进行50:50混合. \n"
+      "'LCD鬼影'通过混合多个缓冲帧来模拟原生LCD响应时间. \n"
+      "'简单'或'智能'是某些运行游戏必需的, 这些游戏通过主动激发LCD鬼影来实现透明特效 (Wave Race, Chikyuu Kaihou Gun ZAS, F-Zero, the Boktai series...)",
       {
-         { "OFF",               NULL },
-         { "mix",               "Simple" },
-         { "mix_smart",         "Smart" },
-         { "lcd_ghosting",      "LCD Ghosting (Accurate)" },
-         { "lcd_ghosting_fast", "LCD Ghosting (Fast)" },
+         { "OFF",               "禁用" },
+         { "mix",               "简单 (精确)" },
+         { "mix_fast",          "简单 (快速)" },
+         { "mix_smart",         "智能 (精确)" },
+         { "mix_smart_fast",    "智能 (快速)" },
+         { "lcd_ghosting",      "LCD鬼影 (精确)" },
+         { "lcd_ghosting_fast", "LCD鬼影 (快速)" },
          { NULL, NULL },
       },
       "OFF"
    },
 #endif
-   {
+	{
       "mgba_force_gbp",
-      "Enable Game Boy Player Rumble (requires restart)",
-      "Enabling this will allow compatible games with the Game Boy Player boot logo to make the controller rumble. Due to how Nintendo decided this feature should work, it may cause glitches such as flickering or lag in some of these games.",
+      "开启GBP震动 (需重启)",
+      "启用此功能将允许带有Game Boy Player启动标志的兼容游戏震动.  由于任天堂决定此功能应该起作用的方式, 因此在某些游戏中可能会引起故障, 例如闪烁或延迟. ",
       {
-         { "OFF", NULL },
-         { "ON",  NULL },
+         { "OFF", "禁用" },
+         { "ON",  "启用" },
          { NULL, NULL },
       },
       "OFF"
@@ -261,7 +232,7 @@ struct retro_core_option_definition *option_defs_intl[RETRO_LANGUAGE_LAST] = {
    NULL,           /* RETRO_LANGUAGE_RUSSIAN */
    NULL,           /* RETRO_LANGUAGE_KOREAN */
    NULL,           /* RETRO_LANGUAGE_CHINESE_TRADITIONAL */
-   option_defs_chs,/* RETRO_LANGUAGE_CHINESE_SIMPLIFIED */
+   NULL,           /* RETRO_LANGUAGE_CHINESE_SIMPLIFIED */
    NULL,           /* RETRO_LANGUAGE_ESPERANTO */
    NULL,           /* RETRO_LANGUAGE_POLISH */
    NULL,           /* RETRO_LANGUAGE_VIETNAMESE */
